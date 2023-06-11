@@ -27,12 +27,11 @@ func (t ISO8601Time) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Time(t).Format(ISO8601))
 }
 
-// Data - the data
-type Data struct {
+// CO2Data - the data
+type CO2Data struct {
 	CO2         int64       `json:"co2"`
 	Humidity    float64     `json:"humidity"`
 	Temperature float64     `json:"temperature"`
-	Tags        []string    `json:"tags,omitempty"`
 	Timestamp   ISO8601Time `json:"timestamp"`
 }
 
@@ -94,18 +93,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// mqtt
-	client := newMqttClient(&opts)
-	if client != nil {
-		logInfoln("Connecting to MQTT broker...")
-		if t := client.Connect(); t.Wait() && t.Error() != nil {
-			logErrorf("%v, disable MQTT output at the time.\n", t.Error())
-			client = nil
-		} else {
-			defer client.Disconnect(1000)
-		}
-	}
-
 	// trap SIGINT
 	sigch := make(chan os.Signal, 1)
 	signal.Notify(sigch, os.Interrupt)
@@ -116,32 +103,11 @@ func main() {
 	}()
 
 	// serial reader channel
-	r := make(chan *Data)
-	// publisher channel
-	p := make(chan *Data)
-
-	// publisher
-	go func() {
-		for d := range p {
-			d.Tags = opts.Tags
-			b, err := json.Marshal(d)
-			if err != nil {
-				logError(err.Error())
-				continue
-			}
-			if !opts.NoStdout {
-				fmt.Println(string(b))
-			}
-			if client != nil {
-				client.Publish(opts.Topic, byte(opts.Qos), false, b)
-			}
-		}
-	}()
+	r := make(chan *CO2Data)
 
 	// periodical dispatcher
 	go func() {
-		var cur *Data // current data
-		p <- <-r      // send the first data
+		var cur *CO2Data // current data
 		tick := time.Tick(time.Second * time.Duration(opts.Interval))
 		for {
 			select {
@@ -149,7 +115,14 @@ func main() {
 				if cur == nil {
 					continue
 				}
-				p <- cur  // publish current
+
+				b, err := json.Marshal(cur)
+				if err != nil {
+					logError(err.Error())
+					continue
+				}
+				fmt.Println(string(b))
+
 				cur = nil // dismiss
 			case cur = <-r:
 			}
@@ -159,7 +132,7 @@ func main() {
 	// reader (main)
 	re := regexp.MustCompile(`CO2=(\d+),HUM=([0-9\.]+),TMP=([0-9\.-]+)`)
 	for s.Scan() {
-		d := &Data{Timestamp: ISO8601Time(time.Now())}
+		d := &CO2Data{Timestamp: ISO8601Time(time.Now())}
 		text := s.Text()
 		m := re.FindAllStringSubmatch(text, -1)
 		if len(m) > 0 {
