@@ -1,10 +1,12 @@
-// the chissoku program
 package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"context"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/soiya/chissoku2/gen/sqlc"
 	"io"
 	"os"
 	"os/signal"
@@ -16,23 +18,12 @@ import (
 	"go.bug.st/serial"
 )
 
-// ISO8601Time utility
-type ISO8601Time time.Time
-
-// ISO8601 date time format
-const ISO8601 = `2006-01-02T15:04:05.000Z07:00`
-
-// MarshalJSON interface function
-func (t ISO8601Time) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Time(t).Format(ISO8601))
-}
-
 // CO2Data - the data
 type CO2Data struct {
-	CO2         int64       `json:"co2"`
-	Humidity    float64     `json:"humidity"`
-	Temperature float64     `json:"temperature"`
-	Timestamp   ISO8601Time `json:"timestamp"`
+	CO2         int64            `json:"co2"`
+	Humidity    float64          `json:"humidity"`
+	Temperature float64          `json:"temperature"`
+	Timestamp   pgtype.Timestamp `json:"timestamp"`
 }
 
 // initialize and prepare the device
@@ -69,6 +60,15 @@ func main() {
 	if opts.Quiet {
 		logWriter = io.Discard
 	}
+
+	pool, err := pgxpool.New(context.Background(), os.Getenv("POSTGRESQL_URL"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to create connection pool: %v\n", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	queries := sqlc.New(pool)
 
 	port, err := serial.Open(opts.Device, &serial.Mode{
 		BaudRate: 115200,
@@ -116,12 +116,22 @@ func main() {
 					continue
 				}
 
-				b, err := json.Marshal(cur)
+				err := queries.InsertData(context.Background(), sqlc.InsertDataParams{
+					Co2:         cur.CO2,
+					Humidity:    cur.Humidity,
+					Temperature: cur.Temperature,
+					Timestamp:   cur.Timestamp,
+				})
+				if err != nil {
+					logErrorln(err.Error())
+					os.Exit(1)
+				}
+
 				if err != nil {
 					logError(err.Error())
 					continue
 				}
-				fmt.Println(string(b))
+				fmt.Printf("co2:%v,humidity:%v,temperature:%v,timestamp:%v\n", cur.CO2, cur.Humidity, cur.Temperature, cur.Timestamp.Time.Format(time.RFC3339))
 
 				cur = nil // dismiss
 			case cur = <-r:
@@ -132,14 +142,14 @@ func main() {
 	// reader (main)
 	re := regexp.MustCompile(`CO2=(\d+),HUM=([0-9\.]+),TMP=([0-9\.-]+)`)
 	for s.Scan() {
-		d := &CO2Data{Timestamp: ISO8601Time(time.Now())}
+		d := &CO2Data{}
 		text := s.Text()
 		m := re.FindAllStringSubmatch(text, -1)
 		if len(m) > 0 {
 			d.CO2, _ = strconv.ParseInt(m[0][1], 10, 64)
 			d.Humidity, _ = strconv.ParseFloat(m[0][2], 64)
 			d.Temperature, _ = strconv.ParseFloat(m[0][3], 64)
-			d.Timestamp = ISO8601Time(time.Now())
+			d.Timestamp = pgtype.Timestamp{Time: time.Now(), Valid: true}
 			r <- d
 		} else if text[:6] == `OK STP` {
 			return // exit 0
