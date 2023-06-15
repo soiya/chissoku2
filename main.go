@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/soiya/chissoku2/gen/sqlc"
 	"io"
 	"os"
 	"os/signal"
@@ -15,6 +12,9 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/soiya/chissoku2/gen/sqlc"
 	"go.bug.st/serial"
 )
 
@@ -127,10 +127,6 @@ func main() {
 					os.Exit(1)
 				}
 
-				if err != nil {
-					logError(err.Error())
-					continue
-				}
 				fmt.Printf("co2:%v,humidity:%v,temperature:%v,timestamp:%v\n", cur.CO2, cur.Humidity, cur.Temperature, cur.Timestamp.Time.Format(time.RFC3339))
 
 				cur = nil // dismiss
